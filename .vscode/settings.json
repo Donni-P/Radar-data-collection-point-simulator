@@ -1,6 +1,11 @@
 {
     "files.associations": {
         "cstdint": "cpp",
-        "random": "cpp"
+        "random": "cpp",
+        "fstream": "cpp",
+        "*.tcc": "cpp",
+        "string": "cpp",
+        "deque": "cpp",
+        "vector": "cpp"
     }
 }

@@ -2,6 +2,9 @@
 #include <imgui-SFML.h>
 #include <math.h>
 #include <array>
+#include <vector>
+#include <SFML/Graphics/Texture.hpp>
+#include <SFML/Graphics/Sprite.hpp>
 #include <SFML/Graphics/ConvexShape.hpp>
 #include <SFML/Graphics/CircleShape.hpp>
 #include <SFML/Graphics/RenderWindow.hpp>
@@ -10,8 +13,10 @@
 constexpr float radiusR = 150.f; 
 constexpr float radiusCP = 70.f;
 constexpr float centerCP = 450.f;
+constexpr float rangeBetweenVertexes = 2.f;
 constexpr int pointInCircle = 500;
 sf::RenderStates states;
+std::vector<sf::VertexArray> addedTrajectories;
 
 class Radar{
 public:
@@ -28,6 +33,7 @@ public:
     }
 
 private:
+    std::vector<sf::VertexArray> trajectories;
     sf::CircleShape radar;
 };
 
@@ -51,20 +57,33 @@ private:
     static inline float center = centerCP;
 };
 
+
 int main() {
     states.blendMode = sf::BlendMultiply;
     sf::RenderWindow window(sf::VideoMode(900, 900), "RDCP Simulator");
     window.setFramerateLimit(60);
     ImGui::SFML::Init(window);
-    ImVec2 pos(0,0);
-    ImVec2 size(405,60);
+
+    //===========preferences IMGUI======================
+    ImVec2 menuPos(0,0);
+    static constexpr float fontScale = 1.3f;
+    static constexpr float timerWidth = 65.f;
+    static constexpr float radSliderWidth = 80.f; 
     auto & style = ImGui::GetStyle();
     style.Alpha = 1.0f;
+    static bool addMode = false;
+    static char timer[10] = "01:00"; 
+    static int amountRads = 2;
+    //=================================================
     CollectionPoint<2>::setRadarsPos();
     CollectionPoint<3>::setRadarsPos();
     CollectionPoint<4>::setRadarsPos();
     CollectionPoint<5>::setRadarsPos();
     sf::Clock deltaClock;
+    static int amountAddedTr = 0;
+    sf::VertexArray TrajectoryToBeAdded;
+    static bool isProcessAdding = false;
+    //==================================================
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
@@ -72,22 +91,44 @@ int main() {
             if (event.type == sf::Event::Closed) {
                 window.close();
             }
+            if((addMode) && (event.type == sf::Event::MouseButtonPressed)){
+                sf::Vertex point(sf::Vector2f(sf::Mouse::getPosition(window)));
+                point.color = sf::Color::Blue; 
+                addedTrajectories.push_back(TrajectoryToBeAdded);
+                addedTrajectories[amountAddedTr].setPrimitiveType(sf::LineStrip);
+                addedTrajectories[amountAddedTr].append(point);
+                isProcessAdding = true;
+            }
+            if(isProcessAdding && (event.type == sf::Event::MouseMoved)) {
+                sf::Vertex point(sf::Vector2f(sf::Mouse::getPosition(window)));
+                point.color = sf::Color::Blue; 
+                addedTrajectories[amountAddedTr].append(point);
+            }
+            if((addMode) && (event.type == sf::Event::MouseButtonReleased)){
+                amountAddedTr++;
+                TrajectoryToBeAdded.clear();
+                isProcessAdding = false;
+            }
         }
         window.clear(sf::Color::White);
 
         ImGui::SFML::Update(window, deltaClock.restart());
-        ImGui::SetNextWindowPos(pos);
-        ImGui::SetNextWindowSize(size);
-
-        ImGui::Begin("Menu", nullptr, ImGuiWindowFlags_NoCollapse);
-        ImGui::PushItemWidth(50.0f);
-        static bool b;
-        ImGui::Checkbox("Add trajectory", &b);
+        ImGui::Begin("Menu", nullptr, ImGuiWindowFlags_NoCollapse | 
+                                      ImGuiWindowFlags_NoResize | 
+                                      ImGuiWindowFlags_AlwaysAutoResize |
+                                      ImGuiWindowFlags_NoMove);
+        ImGui::SetWindowPos(menuPos);
+        ImGui::SetWindowFontScale(fontScale);
+        if (ImGui::Button("Add Mode")){
+            addMode = !addMode;
+            (addMode) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
+                      : ImGui::PopStyleColor();
+        }
         ImGui::SameLine();
-        static char buffer[10] = "01:00"; 
-        ImGui::InputText("Timer", buffer, IM_ARRAYSIZE(buffer));
+        ImGui::SetNextItemWidth(timerWidth);
+        ImGui::InputText("Timer", timer, IM_ARRAYSIZE(timer));
         ImGui::SameLine();
-        static int amountRads = 2;
+        ImGui::SetNextItemWidth(radSliderWidth);
         ImGui::SliderInt("Amount of RADARs", &amountRads, 2, 5);
         ImGui::End();
         switch(amountRads){
@@ -106,6 +147,9 @@ int main() {
             default:
                 break;
         }
+
+        for(int i = 0; (i < amountAddedTr) || ((i <= amountAddedTr) && (isProcessAdding)); i++)
+            window.draw(addedTrajectories[i]);
         ImGui::SFML::Render(window);
         window.display();
     }
