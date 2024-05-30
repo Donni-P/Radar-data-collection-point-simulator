@@ -13,10 +13,47 @@
 constexpr float radiusR = 150.f; 
 constexpr float radiusCP = 70.f;
 constexpr float centerCP = 450.f;
-constexpr float rangeBetweenVertexes = 2.f;
+constexpr int minPointsInTrajectory = 20;
 constexpr int pointInCircle = 500;
 sf::RenderStates states;
-std::vector<sf::VertexArray> addedTrajectories;
+
+class Trajectory;
+namespace given {
+    std::vector<Trajectory> trajectories;
+    bool isProcessAdding = false;
+} 
+
+class Trajectory {
+public:
+    Trajectory(sf::Vector2f firstPoint) : startPoint(2.f), endPoint(2.f) {
+        startPoint.setOrigin(2.f, 2.f);
+        endPoint.setOrigin(2.f, 2.f);
+        startPoint.setFillColor(sf::Color::Blue);
+        endPoint.setFillColor(sf::Color::Blue);
+        startPoint.setPosition(firstPoint);
+        endPoint.setPosition(firstPoint);
+        trajectory.setPrimitiveType(sf::LineStrip);
+        addPoint(firstPoint);
+    }
+    void addPoint(sf::Vector2f point) {
+        sf::Vertex newPoint(point);
+        newPoint.color = sf::Color::Blue;
+        trajectory.append(newPoint);
+        endPoint.setPosition(point);
+    }
+    void drawTrajectory(sf::RenderWindow & win) {
+        win.draw(trajectory);
+        win.draw(startPoint);
+        win.draw(endPoint);
+    }
+    int getCountPoints(void) {
+        return trajectory.getVertexCount();
+    }
+private:
+    sf::CircleShape startPoint;
+    sf::CircleShape endPoint;
+    sf::VertexArray trajectory;
+};
 
 class Radar{
 public:
@@ -30,6 +67,9 @@ public:
     }
     void drawRadar(sf::RenderWindow &win) {   
         win.draw(radar, states);
+    }
+    bool isContainsPoint (sf::Vertex &point){
+        return sqrt(pow((point.position.x - radiusR), 2) + pow((point.position.y - radiusR), 2)) > radiusR;
     }
 
 private:
@@ -80,9 +120,6 @@ int main() {
     CollectionPoint<4>::setRadarsPos();
     CollectionPoint<5>::setRadarsPos();
     sf::Clock deltaClock;
-    static int amountAddedTr = 0;
-    sf::VertexArray TrajectoryToBeAdded;
-    static bool isProcessAdding = false;
     //==================================================
     while (window.isOpen()) {
         sf::Event event;
@@ -92,22 +129,18 @@ int main() {
                 window.close();
             }
             if((addMode) && (event.type == sf::Event::MouseButtonPressed)){
-                sf::Vertex point(sf::Vector2f(sf::Mouse::getPosition(window)));
-                point.color = sf::Color::Blue; 
-                addedTrajectories.push_back(TrajectoryToBeAdded);
-                addedTrajectories[amountAddedTr].setPrimitiveType(sf::LineStrip);
-                addedTrajectories[amountAddedTr].append(point);
-                isProcessAdding = true;
+                given::trajectories.push_back(Trajectory((sf::Vector2f(sf::Mouse::getPosition(window)))));
+                given::isProcessAdding = true;
             }
-            if(isProcessAdding && (event.type == sf::Event::MouseMoved)) {
-                sf::Vertex point(sf::Vector2f(sf::Mouse::getPosition(window)));
-                point.color = sf::Color::Blue; 
-                addedTrajectories[amountAddedTr].append(point);
+            if(given::isProcessAdding && (event.type == sf::Event::MouseMoved)) {
+                if (!given::trajectories.empty()) {
+                    given::trajectories.back().addPoint(sf::Vector2f(sf::Mouse::getPosition(window)));
+                }
             }
             if((addMode) && (event.type == sf::Event::MouseButtonReleased)){
-                amountAddedTr++;
-                TrajectoryToBeAdded.clear();
-                isProcessAdding = false;
+                if(given::trajectories.back().getCountPoints() < minPointsInTrajectory)
+                    given::trajectories.pop_back();
+                given::isProcessAdding = false;
             }
         }
         window.clear(sf::Color::White);
@@ -148,8 +181,8 @@ int main() {
                 break;
         }
 
-        for(int i = 0; (i < amountAddedTr) || ((i <= amountAddedTr) && (isProcessAdding)); i++)
-            window.draw(addedTrajectories[i]);
+        for(int i = 0; i < given::trajectories.size(); i++)
+            given::trajectories[i].drawTrajectory(window);
         ImGui::SFML::Render(window);
         window.display();
     }
