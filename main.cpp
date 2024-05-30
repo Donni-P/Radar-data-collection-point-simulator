@@ -107,13 +107,16 @@ int main() {
     //===========preferences IMGUI======================
     ImVec2 menuPos(0,0);
     static constexpr float fontScale = 1.3f;
-    static constexpr float timerWidth = 65.f;
+    static constexpr float timerWidth = 25.f;
     static constexpr float radSliderWidth = 80.f; 
+    static constexpr ImVec2 separator(20,1);
     auto & style = ImGui::GetStyle();
     style.Alpha = 1.0f;
+    style.ItemSpacing = ImVec2(2,0);
     static bool addMode = false;
-    static char timer[10] = "01:00"; 
     static int amountRads = 2;
+    static unsigned int mins = 1;
+    static unsigned int secs = 0;
     //=================================================
     CollectionPoint<2>::setRadarsPos();
     CollectionPoint<3>::setRadarsPos();
@@ -156,20 +159,33 @@ int main() {
                   : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
         if (ImGui::Button("Add Mode")){
             addMode = !addMode;
-            (addMode) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
-                      : ImGui::PopStyleColor();
         }
         ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::Dummy(separator);
         ImGui::SameLine();
         if (ImGui::Button("Clear")) {
             given::trajectories.clear();
         }
         ImGui::SameLine();
+        ImGui::Dummy(separator);
+        ImGui::SameLine();
+        ImGui::Text("Timer");
+        ImGui::SameLine();
         ImGui::SetNextItemWidth(timerWidth);
-        ImGui::InputText("Timer", timer, IM_ARRAYSIZE(timer));
+        if ((mins < 1) || (mins > 10)) mins = 1;
+        ImGui::InputScalar("m", ImGuiDataType_U8, &mins);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(timerWidth);
+        if (secs > 59) secs = 59;
+        ImGui::InputScalar("s", ImGuiDataType_U8, &secs);
+        ImGui::SameLine();
+        ImGui::Dummy(separator);
+        ImGui::SameLine();
+        ImGui::Text("Amount of radars");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(radSliderWidth);
-        ImGui::SliderInt("Amount of RADARs", &amountRads, 2, 5);
+        ImGui::SliderInt("##Amount of RADARs", &amountRads, 2, 5);
         ImGui::End();
         switch(amountRads){
             case 2:
