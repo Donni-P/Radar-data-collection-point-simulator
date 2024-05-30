@@ -152,10 +152,17 @@ int main() {
                                       ImGuiWindowFlags_NoMove);
         ImGui::SetWindowPos(menuPos);
         ImGui::SetWindowFontScale(fontScale);
+        (addMode) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
+                  : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
         if (ImGui::Button("Add Mode")){
             addMode = !addMode;
             (addMode) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
                       : ImGui::PopStyleColor();
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::Button("Clear")) {
+            given::trajectories.clear();
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(timerWidth);
