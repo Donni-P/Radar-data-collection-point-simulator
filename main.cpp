@@ -3,6 +3,7 @@
 #include <math.h>
 #include <array>
 #include <vector>
+#include <iostream>
 #include <SFML/Graphics/Texture.hpp>
 #include <SFML/Graphics/Sprite.hpp>
 #include <SFML/Graphics/ConvexShape.hpp>
@@ -106,10 +107,10 @@ private:
 };
 
 
-template <int amountRadars>
 class CollectionPoint {
 public:
-    static void setRadarsPos(void) {
+    static void setRadarsPos(int amountRadars) {
+        radars.resize(amountRadars);
         for(int i = 1; i <= amountRadars; i++){
             float angleInRadians = ((360/amountRadars)*M_PI/180) * i;
             radars[i-1].init(sf::Vector2f(center + cosf(angleInRadians)*radiusCP, center - sinf(angleInRadians)*radiusCP));
@@ -117,12 +118,12 @@ public:
     }
 
     static void drawRadars(sf::RenderWindow & win) {
-        for(int i = 0; i < amountRadars; i++)
+        for(int i = 0; i < radars.size(); i++)
             radars[i].drawRadar(win);
     }
 
 private:
-    static inline std::array<Radar, amountRadars> radars;
+    static inline std::vector<Radar> radars;
     static inline float center = centerCP;
 };
 
@@ -149,10 +150,7 @@ int main() {
     static unsigned int secs = 59;
     static int curConfigIndex = 0;
     //=================================================
-    CollectionPoint<2>::setRadarsPos();
-    CollectionPoint<3>::setRadarsPos();
-    CollectionPoint<4>::setRadarsPos();
-    CollectionPoint<5>::setRadarsPos();
+    CollectionPoint::setRadarsPos(amountRads);
     sf::Clock deltaClock;
     //==================================================
     while (window.isOpen()) {
@@ -228,7 +226,8 @@ int main() {
         ImGui::Text("Amount of radars");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(sliderWidth);
-        ImGui::SliderInt("##Amount of RADARs", &amountRads, 2, 5);
+        if (ImGui::SliderInt("##Amount of RADARs", &amountRads, 2, 5))
+            CollectionPoint::setRadarsPos(amountRads);
         ImGui::End();
         if (configMode) {
             ImGui::Begin("Trajectory", nullptr, ImGuiWindowFlags_NoCollapse | 
@@ -271,23 +270,7 @@ int main() {
         }
 
         window.clear(sf::Color::White);
-        switch(amountRads){
-            case 2:
-                CollectionPoint<2>::drawRadars(window);
-                break;
-            case 3:
-                CollectionPoint<3>::drawRadars(window);
-                break;
-            case 4:
-                CollectionPoint<4>::drawRadars(window);
-                break;
-            case 5:
-                CollectionPoint<5>::drawRadars(window);
-                break;   
-            default:
-                break;
-        }
-
+        CollectionPoint::drawRadars(window);
         for(int i = 0; i < given::trajectories.size(); i++)
             given::trajectories[i].drawTrajectory(window);
         ImGui::SFML::Render(window);
