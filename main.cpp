@@ -14,6 +14,8 @@
 constexpr float radiusR = 200.f; 
 constexpr float radiusCP = 120.f;
 constexpr float centerCP = 450.f;
+constexpr float sigma = 2.f;
+constexpr float epsilon = 2.f;
 constexpr int minPointsInTrajectory = 20;
 constexpr int pointInCircle = 500;
 sf::RenderStates states;
@@ -62,12 +64,6 @@ public:
 
     int getCountPoints(void) { return trajectory.getVertexCount(); }
 
-    void setStateConfigWindow(bool state) { openConfigWin = state; }
-
-    bool getStateConfigWindow(void) { return openConfigWin; }
-
-    sf::Vector2f getConfigWindowPos(void) { return startPoint.getPosition(); }
-
     int * getSpeed(void) { return &speed; }
 
     int * getMin0(void) { return &min0; }
@@ -80,8 +76,7 @@ private:
     sf::Color color = sf::Color::Blue;
     int min0 = 0;
     int sec0 = 0;
-    int speed = 15;
-    bool openConfigWin = false;
+    int speed = 1;
 };
 
 class Radar{
@@ -96,13 +91,31 @@ public:
     }
     void drawRadar(sf::RenderWindow &win) {   
         win.draw(radar, states);
+        for(int i = 0; i < trajectories.size(); i++)
+            trajectories[i].drawTrajectory(win);
     }
-    bool isContainsPoint (sf::Vertex &point){
-        return sqrt(pow((point.position.x - radiusR), 2) + pow((point.position.y - radiusR), 2)) > radiusR;
+    void addIfContainsPoint(sf::Vector2f &point){
+        bool isContains = sqrt(pow((point.x - radar.getPosition().x), 2) + 
+                               pow((point.y - radar.getPosition().y), 2)) < radiusR;
+        if (isContains && !isAddingTrajectory) {
+            isAddingTrajectory = true;
+            if(!trajectories.empty())
+                if(trajectories.back().getCountPoints() < minPointsInTrajectory)
+                    trajectories.pop_back();
+            trajectories.push_back(Trajectory(point));
+        } else if (isContains && isAddingTrajectory) {
+            trajectories.back().addPoint(point);
+        } else if (!isContains && isAddingTrajectory) {
+            isAddingTrajectory = false;
+        }
+    }
+    void clearTrajectories(void) {
+        trajectories.clear();
     }
 
 private:
-    std::vector<sf::VertexArray> trajectories;
+    bool isAddingTrajectory = false;
+    std::vector<Trajectory> trajectories;
     sf::CircleShape radar;
 };
 
@@ -122,6 +135,18 @@ public:
             radars[i].drawRadar(win);
     }
 
+    static void radarsAddPoint(sf::Vector2f point) {
+        for(int i = 0; i < radars.size(); i++) {
+            radars[i].addIfContainsPoint(point);
+        }
+    }
+
+    static void clearRadarsTrajectories(void) {
+        for(int i = 0; i < radars.size(); i++) {
+            radars[i].clearTrajectories();
+        }
+    }
+
 private:
     static inline std::vector<Radar> radars;
     static inline float center = centerCP;
@@ -136,6 +161,7 @@ int main() {
     //===========preferences IMGUI======================
     ImVec2 menuPos(0,0);
     ImVec2 configWinPos(0,70);
+    ImVec2 simWinPos(400,70);
     static constexpr float fontScale = 1.3f;
     static constexpr float timerWidth = 25.f;
     static constexpr float sliderWidth = 80.f; 
@@ -145,6 +171,8 @@ int main() {
     style.ItemSpacing.y = 6.f;
     static bool addMode = false;
     static bool configMode = false;
+    static bool simulationMode = false;
+    static bool isPause = false;
     static int amountRads = 2;
     static unsigned int mins = 59;
     static unsigned int secs = 59;
@@ -161,13 +189,16 @@ int main() {
                 window.close();
             }
             if (addMode && (event.type == sf::Event::MouseButtonPressed)) {
-                given::trajectories.push_back(Trajectory((sf::Vector2f(sf::Mouse::getPosition(window)))));
+                sf::Vector2f curMousePos(sf::Mouse::getPosition(window));
+                given::trajectories.push_back(Trajectory(curMousePos));
+                CollectionPoint::radarsAddPoint(curMousePos);
                 given::isProcessAdding = true;
             } 
             if (given::isProcessAdding && (event.type == sf::Event::MouseMoved)) {
-                if (!given::trajectories.empty()) {
-                    given::trajectories.back().addPoint(sf::Vector2f(sf::Mouse::getPosition(window)));
-                }
+                sf::Vector2f curMousePos(sf::Mouse::getPosition(window));
+                CollectionPoint::radarsAddPoint(curMousePos);
+                given::trajectories.back().addPoint(curMousePos);
+
             }
             if (addMode && (event.type == sf::Event::MouseButtonReleased)) {
                 if(given::trajectories.back().getCountPoints() < minPointsInTrajectory)
@@ -186,7 +217,7 @@ int main() {
         (addMode) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
                   : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
         if (ImGui::Button("Add Mode")) {
-            if (!configMode)
+            if (!configMode && !simulationMode)
                 addMode = !addMode;
         }
         ImGui::PopStyleColor();
@@ -194,9 +225,9 @@ int main() {
         ImGui::Dummy(separator);
         ImGui::SameLine();
         (configMode) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
-                  : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
+                     : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
         if (ImGui::Button("Config Mode")) {
-            if (!given::trajectories.empty() && !addMode) {
+            if (!given::trajectories.empty() && !addMode && !simulationMode) {
                 given::trajectories[curConfigIndex].setColor(sf::Color::Blue);
                 configMode = !configMode;
             }
@@ -206,7 +237,10 @@ int main() {
         ImGui::Dummy(separator);
         ImGui::SameLine();
         if (ImGui::Button("Clear")) {
-            given::trajectories.clear();
+            if (!configMode && !simulationMode) {
+                given::trajectories.clear();
+                CollectionPoint::clearRadarsTrajectories();
+            }
         }
         ImGui::SameLine();
         ImGui::Dummy(separator);
@@ -215,19 +249,32 @@ int main() {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(timerWidth);
         if ((mins < 1) || (mins > 59)) mins = 59;
-        ImGui::InputScalar("m", ImGuiDataType_U8, &mins);
+        ImGui::InputScalar("m", ImGuiDataType_U8, &mins, nullptr, nullptr, nullptr, 
+        (simulationMode) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(timerWidth);
         if (secs > 59) secs = 59;
-        ImGui::InputScalar("s", ImGuiDataType_U8, &secs);
+        ImGui::InputScalar("s", ImGuiDataType_U8, &secs, nullptr, nullptr, nullptr, 
+        (simulationMode) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
         ImGui::SameLine();
         ImGui::Dummy(separator);
         ImGui::SameLine();
         ImGui::Text("Amount of radars");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(sliderWidth);
-        if (ImGui::SliderInt("##Amount of RADARs", &amountRads, 2, 5))
+        if (ImGui::SliderInt("##Amount of RADARs", &amountRads, 2, 5, "%d", 
+        (simulationMode) ? ImGuiSliderFlags_NoInput : ImGuiSliderFlags_None))
             CollectionPoint::setRadarsPos(amountRads);
+        ImGui::SameLine();
+        ImGui::Dummy(separator);
+        ImGui::SameLine();
+        (simulationMode) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
+                         : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
+        if (ImGui::Button("Start")) {
+            if (!configMode && !addMode)
+                simulationMode = !simulationMode;
+        }
+        ImGui::PopStyleColor();
         ImGui::End();
         if (configMode) {
             ImGui::Begin("Trajectory", nullptr, ImGuiWindowFlags_NoCollapse | 
@@ -239,7 +286,7 @@ int main() {
             ImGui::Text("Speed");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(sliderWidth);
-            ImGui::SliderInt("pix/min",given::trajectories[curConfigIndex].getSpeed(),8,20);
+            ImGui::SliderInt("pix/sec",given::trajectories[curConfigIndex].getSpeed(),1,4);
             ImGui::Text("t0");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(timerWidth);
@@ -268,11 +315,25 @@ int main() {
             }
             ImGui::End(); 
         }
+        if (simulationMode) {
+            ImGui::Begin("Simulation", nullptr, ImGuiWindowFlags_NoCollapse | 
+                                                ImGuiWindowFlags_NoResize | 
+                                                ImGuiWindowFlags_AlwaysAutoResize |
+                                                ImGuiWindowFlags_NoMove);
+            ImGui::SetWindowPos(simWinPos);
+            (isPause) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
+                      : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
+            if (ImGui::Button("Pause")) {
+            }
+
+            ImGui::PopStyleColor();
+            ImGui::End();
+        }
 
         window.clear(sf::Color::White);
         CollectionPoint::drawRadars(window);
-        for(int i = 0; i < given::trajectories.size(); i++)
-            given::trajectories[i].drawTrajectory(window);
+        /*for(int i = 0; i < given::trajectories.size(); i++)
+            given::trajectories[i].drawTrajectory(window);*/
         ImGui::SFML::Render(window);
         window.display();
     }
