@@ -14,7 +14,7 @@
 constexpr float radiusR = 200.f; 
 constexpr float radiusCP = 120.f;
 constexpr float centerCP = 450.f;
-constexpr float sigma = 2.f;
+constexpr int sigma = 1;
 constexpr float epsilon = 2.f;
 constexpr int minPointsInTrajectory = 20;
 constexpr int pointInCircle = 500;
@@ -28,9 +28,9 @@ namespace given {
 
 class Trajectory {
 public:
-    Trajectory(sf::Vector2f firstPoint) : startPoint(2.f), endPoint(2.f) {
-        startPoint.setOrigin(2.f, 2.f);
-        endPoint.setOrigin(2.f, 2.f);
+    Trajectory(sf::Vector2f firstPoint) : startPoint(3.f), endPoint(3.f) {
+        startPoint.setOrigin(3.f, 3.f);
+        endPoint.setOrigin(3.f, 3.f);
         startPoint.setFillColor(color);
         endPoint.setFillColor(color);
         startPoint.setPosition(firstPoint);
@@ -47,7 +47,7 @@ public:
     }
 
     void drawTrajectory(sf::RenderWindow & win) {
-        win.draw(trajectory);
+        win.draw(trajectory,states);
         win.draw(startPoint);
         win.draw(endPoint);
     }
@@ -91,6 +91,8 @@ public:
     }
     void drawRadar(sf::RenderWindow &win) {   
         win.draw(radar, states);
+    }
+    void drawTrajectories(sf::RenderWindow & win) {
         for(int i = 0; i < trajectories.size(); i++)
             trajectories[i].drawTrajectory(win);
     }
@@ -112,6 +114,7 @@ public:
     void clearTrajectories(void) {
         trajectories.clear();
     }
+    std::vector<Trajectory> & getTrajectories(void) { return trajectories; }
 
 private:
     bool isAddingTrajectory = false;
@@ -133,6 +136,8 @@ public:
     static void drawRadars(sf::RenderWindow & win) {
         for(int i = 0; i < radars.size(); i++)
             radars[i].drawRadar(win);
+        for(int i = 0; i < radars.size(); i++)
+            radars[i].drawTrajectories(win);
     }
 
     static void radarsAddPoint(sf::Vector2f point) {
@@ -146,6 +151,8 @@ public:
             radars[i].clearTrajectories();
         }
     }
+
+    static std::vector<Radar> & getRadars(void) { return radars; }
 
 private:
     static inline std::vector<Radar> radars;
@@ -176,7 +183,8 @@ int main() {
     static int amountRads = 2;
     static unsigned int mins = 59;
     static unsigned int secs = 59;
-    static int curConfigIndex = 0;
+    static int curRadInd = 0;
+    static int curTrajInd = 0;
     //=================================================
     CollectionPoint::setRadarsPos(amountRads);
     sf::Clock deltaClock;
@@ -227,8 +235,9 @@ int main() {
         (configMode) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
                      : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
         if (ImGui::Button("Config Mode")) {
-            if (!given::trajectories.empty() && !addMode && !simulationMode) {
-                given::trajectories[curConfigIndex].setColor(sf::Color::Blue);
+            std::vector<Trajectory> & trajectories = CollectionPoint::getRadars()[curRadInd].getTrajectories();
+            if (!trajectories.empty() && !addMode && !simulationMode) {
+                trajectories[curTrajInd].setColor(sf::Color::Blue);
                 configMode = !configMode;
             }
         }
@@ -281,37 +290,51 @@ int main() {
                                                 ImGuiWindowFlags_NoResize | 
                                                 ImGuiWindowFlags_AlwaysAutoResize |
                                                 ImGuiWindowFlags_NoMove);
-            given::trajectories[curConfigIndex].setColor(sf::Color::Red);
+            static std::vector<Radar> & rads = CollectionPoint::getRadars();
+            std::vector<Trajectory> & trajectories = rads[curRadInd].getTrajectories();
+            trajectories[curTrajInd].setColor(sf::Color::Red);
             ImGui::SetWindowPos(configWinPos);
             ImGui::Text("Speed");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(sliderWidth);
-            ImGui::SliderInt("pix/sec",given::trajectories[curConfigIndex].getSpeed(),1,4);
+            ImGui::SliderInt("pix/sec", trajectories[curTrajInd].getSpeed(),1,4);
             ImGui::Text("t0");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(timerWidth);
-            int * min0 = given::trajectories[curConfigIndex].getMin0();
+            int * min0 = trajectories[curTrajInd].getMin0();
             if (*min0 > mins) *min0 = 0;
             ImGui::InputScalar("m", ImGuiDataType_U8, min0);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(timerWidth);
-            int * sec0 = given::trajectories[curConfigIndex].getSec0();
+            int * sec0 = trajectories[curTrajInd].getSec0();
             if ((*min0 == mins) && (*sec0 > secs)) *sec0 = 0;
             ImGui::InputScalar("s", ImGuiDataType_U8, sec0);
             if (ImGui::Button("<")) {
-                given::trajectories[curConfigIndex].setColor(sf::Color::Blue);
-                if (curConfigIndex == 0)
-                    curConfigIndex = given::trajectories.size() - 1;
-                else 
-                    curConfigIndex--;
+                trajectories[curTrajInd].setColor(sf::Color::Blue);
+                if (curTrajInd == 0) {
+                    if (curRadInd == 0) {
+                        curRadInd = rads.size() - 1;
+                    } else {
+                        curRadInd--;
+                    }
+                    curTrajInd = rads[curRadInd].getTrajectories().size() - 1;
+                } else { 
+                    curTrajInd--;
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button(">")) {
-                given::trajectories[curConfigIndex].setColor(sf::Color::Blue);
-                if (curConfigIndex == (given::trajectories.size() - 1))
-                    curConfigIndex = 0;
-                else 
-                    curConfigIndex++;
+                trajectories[curTrajInd].setColor(sf::Color::Blue);
+                if (curTrajInd == (trajectories.size() - 1)) {
+                    if (curRadInd == (rads.size() - 1)) {
+                        curRadInd = 0;
+                    } else {
+                        curRadInd++;
+                    }
+                    curTrajInd = 0;
+                } else { 
+                    curTrajInd++;
+                }
             }
             ImGui::End(); 
         }
