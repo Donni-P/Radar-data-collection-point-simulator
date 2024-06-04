@@ -16,6 +16,7 @@ constexpr float radiusCP = 120.f;
 constexpr float centerCP = 450.f;
 constexpr int sigma = 1;
 constexpr float epsilon = 2.f;
+constexpr float T = 10.f;
 constexpr int minPointsInTrajectory = 20;
 constexpr int pointInCircle = 500;
 sf::RenderStates states;
@@ -99,14 +100,30 @@ public:
     void addIfContainsPoint(sf::Vector2f &point){
         bool isContains = sqrt(pow((point.x - radar.getPosition().x), 2) + 
                                pow((point.y - radar.getPosition().y), 2)) < radiusR;
-        if (isContains && !isAddingTrajectory) {
+        bool isDistance = true;
+        Trajectory * currentTrajectory;
+        
+        if (!trajectories.empty() && isContains) {
+            currentTrajectory = &trajectories.back();
+            sf::Vertex lastPoint = currentTrajectory->getPoint(currentTrajectory->getCountPoints() - 1);
+            float distance = sqrt(pow((lastPoint.position.x - point.x), 2) +
+                                  pow((lastPoint.position.y - point.y), 2));
+            if (distance >= T) {
+                isDistance = true;
+                sf::Vector2f direction = point - lastPoint.position;
+                direction /= distance;
+                point = lastPoint.position + direction*T;  
+            } else { isDistance = false; }
+        }
+
+        if (isContains && !isAddingTrajectory && isDistance) {
             isAddingTrajectory = true;
-            if(!trajectories.empty())
-                if(trajectories.back().getCountPoints() < minPointsInTrajectory)
-                    trajectories.pop_back();
+            if (currentTrajectory != nullptr)
+                if (currentTrajectory->getCountPoints() < minPointsInTrajectory)
+                    trajectories.pop_back();   
             trajectories.push_back(Trajectory(point));
-        } else if (isContains && isAddingTrajectory) {
-            trajectories.back().addPoint(point);
+        } else if (isContains && isAddingTrajectory && isDistance) {
+            currentTrajectory->addPoint(point);
         } else if (!isContains && isAddingTrajectory) {
             isAddingTrajectory = false;
         }
