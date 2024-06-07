@@ -3,6 +3,7 @@
 #include <math.h>
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 #include <iostream>
 #include <SFML/Graphics/Texture.hpp>
@@ -51,6 +52,8 @@ public:
         speed = std::get<2>(initParams);
     }
 
+    void resize(int size) { trajectory.resize(size); }
+
     void addPoint(sf::Vector2f point) {
         sf::Vertex newPoint(point);
         newPoint.color = color;
@@ -65,7 +68,7 @@ public:
     }
 
     void setColor(sf::Color col) {
-        for(int i = 0; i < trajectory.getVertexCount(); i++) {
+        for (int i = 0; i < trajectory.getVertexCount(); i++) {
             trajectory[i].color = col;
         }
         startPoint.setFillColor(col);
@@ -90,7 +93,7 @@ public:
 
     void refreshDirections(void) {
         directions.resize(getCountPoints());
-        for(int i = 0; i < directions.size(); i++) {
+        for (int i = 0; i < directions.size(); i++) {
             if (i != (getCountPoints() - 1))
                 directions[i] = calcDirection(trajectory[i].position,trajectory[i+1].position);
             else
@@ -193,7 +196,8 @@ public:
         stay,
         add,
         config,
-        simulation
+        simulation,
+        pause
     };
 
     static void init(void) {
@@ -208,7 +212,7 @@ public:
 
     static void setRadarsPos(int amountRadars) {
         radars.resize(amountRadars);
-        for(int i = 1; i <= amountRadars; i++){
+        for (int i = 1; i <= amountRadars; i++){
             float angleInRadians = ((360/amountRadars)*M_PI/180) * i;
             radars[i-1].init(sf::Vector2f(center + cosf(angleInRadians)*radiusCP, center - sinf(angleInRadians)*radiusCP));
         }
@@ -217,7 +221,7 @@ public:
 
     static void updateTrajectoryTime(int ind) {
         int & speed = definedTrajectories[ind].trajectory.getSpeed();
-        for(int i = 0; i < definedTrajectories[ind].subTrajectories.size(); i++) {
+        for (int i = 0; i < definedTrajectories[ind].subTrajectories.size(); i++) {
             int numPoint = 0;
             while(definedTrajectories[ind].trajectory.getPoint(numPoint).position != 
             definedTrajectories[ind].subTrajectories[i]->getPoint(0).position) { numPoint++; }
@@ -238,7 +242,7 @@ public:
         bool contains = false;
         bool enoughDistance = false;
         std::tuple<bool, bool, Trajectory*> res;
-        for(int i = 0; i < radars.size(); i++) {
+        for (int i = 0; i < radars.size(); i++) {
             res = radars[i].addIfContainsPoint(point);
             contains = contains || std::get<0>(res);
             enoughDistance = enoughDistance || std::get<1>(res);
@@ -252,24 +256,24 @@ public:
     }
 
     static void endAddingProcess(void) {
-        for(int i = 0; i < radars.size(); i++) {
+        for (int i = 0; i < radars.size(); i++) {
             radars[i].endAddingTrajectory();
         }
     }
 
     static void clearRadarsTrajectories(void) {
-        for(int i = 0; i < radars.size(); i++) {
+        for (int i = 0; i < radars.size(); i++) {
             radars[i].clearTrajectories();
         }
     }
 
-    static sf::Vector2f extrapolateTrajectories(bool extrExisting) {
+    static void extrapolateTrajectories(bool extrExisting) {
         std::vector<Trajectory> & trajectories = 
         (extrExisting) ? existingTrajectories : incomingTrajectories;
         std::vector<Trajectory> & labels = 
         (!extrExisting) ? existingTrajectories : incomingTrajectories;
         std::vector<sf::Vector2f> offsets(trajectories.size(), sf::Vector2f(0.f,0.f));
-        for(int i = 0; i < trajectories.size(); i++) {
+        for (int i = 0; i < trajectories.size(); i++) {
             int speed = trajectories[i].getSpeed();
             for (int j = 0; j < trajectories.size(); i++) {
                 if (j != i) {
@@ -280,7 +284,7 @@ public:
                     );
                 }
             }
-            for(int j = 0; j < labels.size(); j++) {
+            for (int j = 0; j < labels.size(); j++) {
                 offsets[i] += Trajectory::calcOffset(
                     trajectories[i].getPoint(trajectories[i].getCountPoints()-1).position,
                     labels[j].getPoint(labels[j].getCountPoints()-1).position,
@@ -290,7 +294,7 @@ public:
             offsets[i] += (trajectories[i].getDirection(trajectories[i].getCountPoints()-1)
                           * ((float)speed)) / ((float)T);
         }
-        for(int i = 0; i < trajectories.size(); i++) {
+        for (int i = 0; i < trajectories.size(); i++) {
             sf::Vector2f newPoint = trajectories[i].getPoint(trajectories[i].getCountPoints()-1).position + offsets[i];
             trajectories[i].addPoint(newPoint);
             trajectories[i].refreshDirections();
@@ -298,59 +302,110 @@ public:
     }
 
     static void identificateTrajectories(void) {
-        std::map<sf::Vector2f, std::pair<int, float>> identifiedPoints;
-        for(int i = 0; i < existingTrajectories.size(); i++) {
-            Trajectory & existingT = existingTrajectories[i];
-            for(int j = 0; j < incomingTrajectories.size(); i++) {
-                Trajectory & incomingT = incomingTrajectories[j];
-                int radInd = incomingT.getRadarIndice();
-                sf::Vector2f incomLastP = incomingT.getPoint(incomingT.getCountPoints()-1).position;
-                float distance = Trajectory::calcDistance(
-                    existingT.getPoint(existingT.getCountPoints()-1).position,
-                    incomLastP
-                );
+        std::vector<std::map<std::pair<int,int>, std::pair<int,float>>> identificationVariants{{}};
+        std::vector<float> sumDistances;
+        std::map<int, sf::Vector2f> newExistingPoints;
+        std::map<int,int> identifiedPointsCount;
+        int minDistanceVarInd = 0;
+        for (int i = 0; i < incomingTrajectories.size(); i++) {
+            for (int j = 0; j < existingTrajectories.size(); j++) {
+                sf::Vector2f existLastP = existingTrajectories[j].getPoint(existingTrajectories[j].getCountPoints()-1).position;
+                sf::Vector2f incomLastP = incomingTrajectories[i].getPoint(incomingTrajectories[i].getCountPoints()-1).position;
+                newExistingPoints[j] = existLastP;
+                float distance = Trajectory::calcDistance(existLastP, incomLastP);
+                int radInd = incomingTrajectories[i].getRadarIndice();
                 if (distance < epsilon) {
-                    if(identifiedPoints.count(incomLastP) > 0) {
-                        if (identifiedPoints[incomLastP].first > distance)
-                            identifiedPoints[radInd] = {distance, incomLastP};
-                    } else {
-                        identifiedPoints[radInd] = {distance, incomLastP};
+                    for (auto var : identificationVariants) {
+                        if (var.count({j,radInd}) > 0) {
+                            std::map<std::pair<int,int>, std::pair<int,float>> newVar(var);
+                            newVar[{j,radInd}] = {i, distance};
+                            identificationVariants.push_back(newVar);
+                        } else {
+                            var[{j,radInd}] = {i, distance};
+                        }
                     }
                 }
             }
+        }
+        for (int i = 0; i < identificationVariants.size(); i++) {
+            sumDistances.push_back(0.f);
+            for (auto [key, value] : identificationVariants[i]) {
+                sumDistances[i] = sumDistances[i] + value.second;
+            }
+            if (sumDistances[i] < sumDistances[minDistanceVarInd])
+                minDistanceVarInd = i;
+        }
 
+        for (auto [key,value] : identificationVariants[minDistanceVarInd]) {
+            Trajectory & incomT = incomingTrajectories[value.first];
+            newExistingPoints[key.first] += incomT.getPoint(incomT.getCountPoints()-1).position;
+            if (identifiedPointsCount.count(key.first) > 0) 
+                identifiedPointsCount[key.first] += 1;
+            else 
+                identifiedPointsCount[key.first] = 1;
+            incomingTrajectories.erase(incomingTrajectories.begin() + value.first);
+        } 
+        for (int i = 0; i < existingTrajectories.size(); i++) {
+            existingTrajectories[i].resize(existingTrajectories[i].getCountPoints() - T/2);
+            if (newExistingPoints.count(i) > 0) {
+                existingTrajectories[i].addPoint(newExistingPoints[i]/((float)identifiedPointsCount[i]));
+            } else {
+                existingTrajectories[i].addPoint(
+                    existingTrajectories[i].getPoint(existingTrajectories[i].getCountPoints()-1).position +
+                    (existingTrajectories[i].getDirection(existingTrajectories[i].getCountPoints()-1)
+                    * ((float)existingTrajectories[i].getSpeed())) / ((float)T));
+            }
+        }
+        for (int i = 0; i < incomingTrajectories.size(); i++) {
+            incomingTrajectories[i].resize(incomingTrajectories[i].getCountPoints() - T/2);
+            existingTrajectories.push_back(incomingTrajectories[i]);
         }
     }
 
     static void tick(sf::RenderWindow & win, sf::Clock & clk) {
         sf::Time elapsed = clk.restart();
         ImGui::SFML::Update(win, elapsed);
+        static int elapsedSecs = 0;
+        static sf::Time stepTime = sf::Time::Zero;
+        static sf::Time periodTime = sf::Time::Zero;
         if (modeCP == mode::simulation) {
-            static int elapsedSecs = 0;
-            static sf::Time stepTime = sf::Time::Zero;
-            static sf::Time periodTime = sf::Time::Zero;
             stepTime += elapsed;
             periodTime += elapsed;
             if (stepTime >= simStep) {
                 static bool extrExisting = true;
                 elapsedSecs++;
                 stepTime -= simStep;
+                if (timer.second == 0) {
+                    if (timer.first == 0) {
+                        modeCP = mode::pause;
+                    } else {
+                        timer.first--;
+                        timer.second = 59;
+                    }
+                } else {
+                    timer.second--;
+                }/*
                 extrapolateTrajectories(extrExisting);
-                extrExisting = !extrExisting;
+                extrExisting = !extrExisting;*/
             }
             if (periodTime >= updateRate) {
-                identificationTrajectories();
+                periodTime -= updateRate;
+                /*identificateTrajectories();
+                initIncomingTrajectories(elapsedSecs);*/
             }
-            
+        } else if (modeCP != mode::pause) {
+            elapsedSecs = 0;
+            stepTime = sf::Time::Zero;
+            periodTime = sf::Time::Zero;
         }
     }
 
-    static void initIncomingTrajectories(int elapsedSecs, int ind) {
-        for(int i = 0; i < radars.size(); i++) {
+    static void initIncomingTrajectories(int elapsedSecs) {
+        for (int i = 0; i < radars.size(); i++) {
             std::vector<Trajectory> & trajectories = radars[i].getTrajectories();
-            for(int j = 0; j < trajectories.size(); j++) {
+            for (int j = 0; j < trajectories.size(); j++) {
                 std::pair<int,int> & t0 = trajectories[j].getStartTime();
-                ind = elapsedSecs - (t0.first*60 + t0.second);
+                int ind = elapsedSecs - (t0.first*60 + t0.second);
                 if ((ind >= 0) && (ind < trajectories[j].getCountPoints())){
                     std::tuple<sf::Vertex, sf::Vector2f, int> initParams = {
                         trajectories[j].getPoint(ind),
@@ -365,7 +420,7 @@ public:
 
     static void initExistingTrajectories(void) {
         if(existingTrajectories.empty()) {
-            for(int i = 0; i < definedTrajectories.size(); i++) {
+            for (int i = 0; i < definedTrajectories.size(); i++) {
                 if (definedTrajectories[i].trajectory.getStartTime() == std::make_pair(0,0)) {
                     std::tuple<sf::Vertex,sf::Vector2f,int> initParams = {
                         definedTrajectories[i].trajectory.getPoint(0),
@@ -380,22 +435,24 @@ public:
     }
 
     static void drawRadars(sf::RenderWindow & win) {
-        for(int i = 0; i < radars.size(); i++)
+        for (int i = 0; i < radars.size(); i++)
             radars[i].drawRadar(win);
     }
 
     static void drawTrajectories(sf::RenderWindow & win) {
         if (modeCP == mode::simulation) {
-            for(int i = 0; i < existingTrajectories.size(); i++) 
+            for (int i = 0; i < existingTrajectories.size(); i++) 
                 existingTrajectories[i].drawTrajectory(win);
+            for (int i = 0; i < incomingTrajectories.size(); i++) 
+                incomingTrajectories[i].drawTrajectory(win);
         } else {
-            for(int i = 0; i < definedTrajectories.size(); i++)
+            for (int i = 0; i < definedTrajectories.size(); i++)
                 definedTrajectories[i].trajectory.drawTrajectory(win);
         }
     }
 
     static void drawGUI(void) {
-        if (modeCP == mode::simulation) {
+        if ((modeCP == mode::simulation) || (modeCP == mode::pause)) {
             ImGui::Begin("Simulation", nullptr, ImGuiWindowFlags_NoCollapse | 
                                                 ImGuiWindowFlags_NoResize | 
                                                 ImGuiWindowFlags_AlwaysAutoResize |
@@ -410,8 +467,20 @@ public:
             ImGui::InputScalar("s", ImGuiDataType_U8, &timer.second, nullptr, 
                                 nullptr, nullptr, ImGuiInputTextFlags_ReadOnly);
             ImGui::SameLine();
+            (modeCP == mode::pause) ? ImGui::PushStyleColor(ImGuiCol_Button, sf::Color::Red) 
+                                    : ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
+            if (ImGui::Button("Pause")) {
+                if (modeCP == mode::simulation)
+                    modeCP = mode::pause;
+                else if (timer != std::make_pair(0,0))
+                    modeCP = mode::simulation;
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
             if (ImGui::Button("Stop")) {
                 modeCP = mode::stay;
+                existingTrajectories.clear();
+                incomingTrajectories.clear();
             }
 
             ImGui::PopStyleColor();
@@ -433,8 +502,8 @@ public:
                     modeCP = mode::add;
                 } else {
                     modeCP = mode::stay;
-                    for(int i = 0; i < definedTrajectories.size(); i++) {
-                        for(int j = 0; j < definedTrajectories[i].subTrajectories.size(); j++)
+                    for (int i = 0; i < definedTrajectories.size(); i++) {
+                        for (int j = 0; j < definedTrajectories[i].subTrajectories.size(); j++)
                             definedTrajectories[i].subTrajectories[j]->refreshDirections();
                     }
                 }
@@ -474,7 +543,7 @@ public:
                 if ((timer.first < 1) || (timer.first > 59)) {
                     timer.first = prevTimer.first;
                 }
-                for(int i = 0; i < definedTrajectories.size(); i++) {
+                for (int i = 0; i < definedTrajectories.size(); i++) {
                     if (isOverLimitTime(i)) {
                         definedTrajectories[i].trajectory.getStartTime() = {0,0};
                         updateTrajectoryTime(i);
@@ -486,7 +555,7 @@ public:
             ImGui::SetNextItemWidth(timerWidth);
             if (ImGui::InputScalar("s", ImGuiDataType_U8, &timer.second)) {
                 if (timer.second > 59) timer.second = prevTimer.second;
-                for(int i = 0; i < definedTrajectories.size(); i++) {
+                for (int i = 0; i < definedTrajectories.size(); i++) {
                     if (isOverLimitTime(i)) {
                         definedTrajectories[i].trajectory.getStartTime() = {0,0};
                         updateTrajectoryTime(i);
@@ -509,7 +578,7 @@ public:
                 if ((modeCP != mode::config) && (modeCP != mode::add)) {
                     modeCP = mode::simulation;
                     initExistingTrajectories();
-                    initIncomingTrajectories(0,0);
+                    initIncomingTrajectories(0);
                 }
             }
             ImGui::End();
@@ -524,7 +593,7 @@ public:
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(sliderWidth);
                 if (ImGui::SliderInt("pix/sec", &definedTrajectories[curInd].trajectory.getSpeed(),1,4)) {
-                    for(int i = 0; i < definedTrajectories[curInd].subTrajectories.size(); i++) {
+                    for (int i = 0; i < definedTrajectories[curInd].subTrajectories.size(); i++) {
                         definedTrajectories[curInd].subTrajectories[i]->getSpeed() 
                                 = 
                         definedTrajectories[curInd].trajectory.getSpeed();
@@ -611,9 +680,6 @@ private:
     struct defTrajectory {
         Trajectory trajectory;
         std::vector<Trajectory*> subTrajectories;
-    };
-    struct target {
-
     };
     static inline std::pair<int,int> timer = {59,59};
     static inline mode modeCP = mode::stay;
