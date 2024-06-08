@@ -116,7 +116,7 @@ private:
     sf::VertexArray trajectory;
     std::vector<sf::Vector2f> directions = {sf::Vector2f(0,0)};
     sf::Color color = sf::Color::Blue;
-    std::pair<int,int> t0 = {0,0};
+    std::pair<int,int> t0 = std::make_pair(0,0);
     int speed = 1;
     int radIndice;
 };
@@ -136,17 +136,16 @@ public:
         win.draw(radar, states);
     }
 
-    std::tuple<bool, bool, Trajectory*> addIfContainsPoint(sf::Vector2f &point){
+    std::tuple<bool, bool, int> addIfContainsPoint(sf::Vector2f &point){
         bool isContains = Trajectory::calcDistance(point, radar.getPosition()) < radiusR;
         bool isDistance = false;
-        Trajectory * currentTrajectory = nullptr;
+        int currentTrajectoryInd = -1;
         if (isContains) {
             if (!isAddingTrajectory) {
                 isAddingTrajectory = true;
                 trajectories.push_back(Trajectory(point));
             }
-            currentTrajectory = &trajectories.back();
-            sf::Vertex lastPoint = currentTrajectory->getPoint(currentTrajectory->getCountPoints() - 1);
+            sf::Vertex lastPoint = trajectories.back().getPoint(trajectories.back().getCountPoints() - 1);
             float distance = Trajectory::calcDistance(lastPoint.position, point);
             if (distance >= T) {
                 isDistance = true;
@@ -156,24 +155,21 @@ public:
             } else { isDistance = false; }
 
             if (isDistance) {
-                currentTrajectory->addPoint(point);
+                trajectories.back().addPoint(point);
             }
-            currentTrajectory = nullptr;
-        } else if (isAddingTrajectory) { 
-            isAddingTrajectory = false; 
-            if (trajectories.back().getCountPoints() < minPointsInTrajectory) 
-                trajectories.pop_back();
-            else 
-                currentTrajectory = &trajectories.back();
+        } else  { 
+            endAddingTrajectory(currentTrajectoryInd);
         }
-        return {isContains, isDistance, currentTrajectory};
+        return {isContains, isDistance, currentTrajectoryInd};
     }
 
-    void endAddingTrajectory(void) {
+    void endAddingTrajectory(int & ind) {
         if (isAddingTrajectory) { 
             isAddingTrajectory = false;
             if (trajectories.back().getCountPoints() < minPointsInTrajectory) 
                 trajectories.pop_back();
+            else 
+                ind = trajectories.size() - 1;
         }
     }
 
@@ -221,17 +217,20 @@ public:
 
     static void updateTrajectoryTime(int ind) {
         Trajectory & trajectory = definedTrajectories[ind].trajectory;
-        std::vector<Trajectory*> & subtrajectories = definedTrajectories[ind].subTrajectories;
+        std::vector<std::pair<int,int>> & subTrajectoriesRadInd = definedTrajectories[ind].subTrajectoriesRadInd;
         int & speed = trajectory.getSpeed();
         std::pair<int,int> trajectoryStartTime = trajectory.getStartTime();
-        for (int i = 0; i < subtrajectories.size(); i++) {
+        for (int i = 0; i < subTrajectoriesRadInd.size(); i++) {
             for (int j = 0; j < trajectory.getCountPoints(); j++) {
-                if (trajectory.getPoint(j).position == subtrajectories[i]->getPoint(0).position) {
-                    std::pair<int,int> & subStartTime = subtrajectories[i]->getStartTime();
+                int subRadInd = subTrajectoriesRadInd[i].first;
+                int subTrajectoryInd = subTrajectoriesRadInd[i].second;
+                if (trajectory.getPoint(j).position == 
+                    radars[subRadInd].getTrajectories()[subTrajectoryInd].getPoint(0).position) {
+                    std::pair<int,int> & subStartTime = radars[subRadInd].getTrajectories()[subTrajectoryInd].getStartTime();
                     /*subStartTime.first = trajectoryStartTime.first + (T*j/speed) / 60;
                     subStartTime.second = trajectoryStartTime.second + (T*j/speed) % 60;*/
-                    /*subStartTime = {(trajectoryStartTime.first + (T*j/speed) / 60),
-                                    (trajectoryStartTime.second + (T*j/speed) % 60)};*/
+                    subStartTime = {(trajectoryStartTime.first + (T*j/speed) / 60),
+                                    (trajectoryStartTime.second + (T*j/speed) % 60)};
                 }
             }
         }
@@ -247,15 +246,15 @@ public:
     static std::pair<bool, bool> radarsAddPoint(sf::Vector2f &point) {
         bool contains = false;
         bool enoughDistance = false;
-        std::tuple<bool, bool, Trajectory*> res;
+        std::tuple<bool, bool, int> res;
         for (int i = 0; i < radars.size(); i++) {
             res = radars[i].addIfContainsPoint(point);
             contains = contains || std::get<0>(res);
             enoughDistance = enoughDistance || std::get<1>(res);
-            if(std::get<2>(res) != nullptr) {
-                Trajectory * newSubTrajectory = std::get<2>(res);
-                definedTrajectories.back().subTrajectories.push_back(newSubTrajectory);
-                newSubTrajectory->getRadarIndice() = i;
+            if(std::get<2>(res) != -1) {
+                int newSubTrajectoryInd = std::get<2>(res);
+                definedTrajectories.back().subTrajectoriesRadInd.push_back({i, newSubTrajectoryInd});
+                radars[i].getTrajectories()[newSubTrajectoryInd].getRadarIndice() = i;
             }
         }
         return {contains, enoughDistance};
@@ -263,7 +262,10 @@ public:
 
     static void endAddingProcess(void) {
         for (int i = 0; i < radars.size(); i++) {
-            radars[i].endAddingTrajectory();
+            int ind = -1;
+            radars[i].endAddingTrajectory(ind);
+            if (ind != -1)
+                definedTrajectories.back().subTrajectoriesRadInd.push_back({i, ind});
         }
     }
 
@@ -596,8 +598,10 @@ public:
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(sliderWidth);
                 if (ImGui::SliderInt("pix/sec", &definedTrajectories[curInd].trajectory.getSpeed(),1,4)) {
-                    for (int i = 0; i < definedTrajectories[curInd].subTrajectories.size(); i++) {
-                        definedTrajectories[curInd].subTrajectories[i]->getSpeed() 
+                    for (int i = 0; i < definedTrajectories[curInd].subTrajectoriesRadInd.size(); i++) {
+                        int radInd = definedTrajectories[curInd].subTrajectoriesRadInd[i].first;
+                        int trajectoryInd = definedTrajectories[curInd].subTrajectoriesRadInd[i].second;
+                        radars[i].getTrajectories()[trajectoryInd].getSpeed() 
                                 = 
                         definedTrajectories[curInd].trajectory.getSpeed();
                     }
@@ -643,15 +647,15 @@ public:
     }
 
     static void eventsProcessing(sf::Event ev, sf::RenderWindow & win) {
+        static bool mousePressed = false;
+        static bool trajectoryCreated = false;
         if (modeCP == mode::add) {
-            static bool mousePressed = false;
-            static bool trajectoryCreated = false;
             if (ev.type == sf::Event::MouseButtonPressed) {
                 sf::Vector2f curMousePos(sf::Mouse::getPosition(win));
                 std::pair<bool, bool> res = CollectionPoint::radarsAddPoint(curMousePos);
                 if (res.first) {
                     definedTrajectories.push_back
-                    (defTrajectory({Trajectory(curMousePos), std::vector<Trajectory*>{}}));
+                    (defTrajectory({Trajectory(curMousePos), std::vector<std::pair<int,int>>{}}));
                     trajectoryCreated = true;
                 }
                 mousePressed = true;
@@ -662,7 +666,7 @@ public:
                 if (res.first) {
                     if (!trajectoryCreated) {
                         definedTrajectories.push_back
-                        (defTrajectory({Trajectory(curMousePos), std::vector<Trajectory*>{}}));
+                        (defTrajectory({Trajectory(curMousePos), std::vector<std::pair<int,int>>{}}));
                         trajectoryCreated = true;
                     } else if (res.second) {
                         definedTrajectories.back().trajectory.addPoint(curMousePos);
@@ -677,13 +681,13 @@ public:
                 mousePressed = false;
                 trajectoryCreated = false;
             }
-        }
+        } else { mousePressed = false; }
     }
 
 private:
     struct defTrajectory {
         Trajectory trajectory;
-        std::vector<Trajectory*> subTrajectories;
+        std::vector<std::pair<int,int>> subTrajectoriesRadInd;
     };
     static inline std::pair<int,int> timer = {59,59};
     static inline mode modeCP = mode::stay;
