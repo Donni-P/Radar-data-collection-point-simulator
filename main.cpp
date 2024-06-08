@@ -46,8 +46,7 @@ public:
         trajectory.setPrimitiveType(sf::LineStrip);
         addPoint(firstPoint);
     }
-    Trajectory(std::tuple<sf::Vertex,sf::Vector2f,int> initParams) {
-        Trajectory(std::get<0>(initParams).position);
+    Trajectory(std::tuple<sf::Vertex,sf::Vector2f,int> initParams) : Trajectory(std::get<0>(initParams).position) {
         directions.push_back(std::get<1>(initParams));
         speed = std::get<2>(initParams);
     }
@@ -58,6 +57,7 @@ public:
         sf::Vertex newPoint(point);
         newPoint.color = color;
         trajectory.append(newPoint);
+        refreshDirections();
         endPoint.setPosition(point);
     }
 
@@ -93,8 +93,8 @@ public:
 
     void refreshDirections(void) {
         directions.resize(getCountPoints());
-        for (int i = 0; i < directions.size(); i++) {
-            if (i != (getCountPoints() - 1))
+        for (int i = 0; (i < directions.size()) && (directions.size() > 1); i++) {
+            if (i != (getCountPoints() - 1)) 
                 directions[i] = calcDirection(trajectory[i].position,trajectory[i+1].position);
             else
                 directions[i] = directions[i-1];
@@ -114,7 +114,7 @@ private:
     sf::CircleShape startPoint; 
     sf::CircleShape endPoint;
     sf::VertexArray trajectory;
-    std::vector<sf::Vector2f> directions;
+    std::vector<sf::Vector2f> directions = {sf::Vector2f(0,0)};
     sf::Color color = sf::Color::Blue;
     std::pair<int,int> t0 = {0,0};
     int speed = 1;
@@ -220,14 +220,20 @@ public:
 
 
     static void updateTrajectoryTime(int ind) {
-        int & speed = definedTrajectories[ind].trajectory.getSpeed();
-        for (int i = 0; i < definedTrajectories[ind].subTrajectories.size(); i++) {
-            int numPoint = 0;
-            while(definedTrajectories[ind].trajectory.getPoint(numPoint).position != 
-            definedTrajectories[ind].subTrajectories[i]->getPoint(0).position) { numPoint++; }
-            std::pair<int,int> curStartTime = definedTrajectories[ind].subTrajectories[i]->getStartTime();
-            curStartTime.first += (T*numPoint/speed) / 60;
-            curStartTime.second += (T*numPoint/speed) % 60;
+        Trajectory & trajectory = definedTrajectories[ind].trajectory;
+        std::vector<Trajectory*> & subtrajectories = definedTrajectories[ind].subTrajectories;
+        int & speed = trajectory.getSpeed();
+        std::pair<int,int> trajectoryStartTime = trajectory.getStartTime();
+        for (int i = 0; i < subtrajectories.size(); i++) {
+            for (int j = 0; j < trajectory.getCountPoints(); j++) {
+                if (trajectory.getPoint(j).position == subtrajectories[i]->getPoint(0).position) {
+                    std::pair<int,int> & subStartTime = subtrajectories[i]->getStartTime();
+                    /*subStartTime.first = trajectoryStartTime.first + (T*j/speed) / 60;
+                    subStartTime.second = trajectoryStartTime.second + (T*j/speed) % 60;*/
+                    /*subStartTime = {(trajectoryStartTime.first + (T*j/speed) / 60),
+                                    (trajectoryStartTime.second + (T*j/speed) % 60)};*/
+                }
+            }
         }
     }
 
@@ -297,7 +303,6 @@ public:
         for (int i = 0; i < trajectories.size(); i++) {
             sf::Vector2f newPoint = trajectories[i].getPoint(trajectories[i].getCountPoints()-1).position + offsets[i];
             trajectories[i].addPoint(newPoint);
-            trajectories[i].refreshDirections();
         }
     }
 
@@ -384,14 +389,14 @@ public:
                     }
                 } else {
                     timer.second--;
-                }/*
+                }
                 extrapolateTrajectories(extrExisting);
-                extrExisting = !extrExisting;*/
+                extrExisting = !extrExisting;
             }
             if (periodTime >= updateRate) {
                 periodTime -= updateRate;
-                /*identificateTrajectories();
-                initIncomingTrajectories(elapsedSecs);*/
+                identificateTrajectories();
+                initIncomingTrajectories(elapsedSecs);
             }
         } else if (modeCP != mode::pause) {
             elapsedSecs = 0;
@@ -501,11 +506,9 @@ public:
                 if (modeCP == mode::stay) {
                     modeCP = mode::add;
                 } else {
+                    for (int i = 0; i < definedTrajectories.size(); i++)
+                        updateTrajectoryTime(i);
                     modeCP = mode::stay;
-                    for (int i = 0; i < definedTrajectories.size(); i++) {
-                        for (int j = 0; j < definedTrajectories[i].subTrajectories.size(); j++)
-                            definedTrajectories[i].subTrajectories[j]->refreshDirections();
-                    }
                 }
             }
             ImGui::PopStyleColor();
@@ -659,7 +662,7 @@ public:
                 if (res.first) {
                     if (!trajectoryCreated) {
                         definedTrajectories.push_back
-                        (defTrajectory({Trajectory(curMousePos), std::vector<Trajectory*>()}));
+                        (defTrajectory({Trajectory(curMousePos), std::vector<Trajectory*>{}}));
                         trajectoryCreated = true;
                     } else if (res.second) {
                         definedTrajectories.back().trajectory.addPoint(curMousePos);
@@ -668,8 +671,9 @@ public:
             }
             if (ev.type == sf::Event::MouseButtonReleased) {
                 CollectionPoint::endAddingProcess();
-                if (definedTrajectories.back().trajectory.getCountPoints() < minPointsInTrajectory)
-                    definedTrajectories.pop_back();
+                if (!definedTrajectories.empty())
+                    if (definedTrajectories.back().trajectory.getCountPoints() < minPointsInTrajectory)
+                        definedTrajectories.pop_back();
                 mousePressed = false;
                 trajectoryCreated = false;
             }
