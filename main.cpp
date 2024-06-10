@@ -275,6 +275,119 @@ public:
         }
     }
 
+    static void identificateExisting(void) {
+        std::vector<std::map<std::pair<int,int>, std::pair<int,float>>> identificationVariants{{}};
+        std::vector<float> sumDistances;
+        std::map<int, sf::Vector2f> newExistingPoints;
+        std::map<int,int> identifiedPointsCount;
+        int minDistanceVarInd = 0;
+        for (int i = 0; i < incomingTrajectories.size(); i++) {
+            for (int j = 0; j < existingTrajectories.size(); j++) {
+                sf::Vector2f existLastP = existingTrajectories[j].getPoint(existingTrajectories[j].getCountPoints()-1).position;
+                sf::Vector2f incomLastP = incomingTrajectories[i].getPoint(incomingTrajectories[i].getCountPoints()-1).position;
+                newExistingPoints[j] = existLastP;
+                float distance = Trajectory::calcDistance(existLastP, incomLastP);
+                int radInd = incomingTrajectories[i].getRadarIndice();
+                if (distance < epsilon) {
+                    for (auto var : identificationVariants) {
+                        if (var.count({j,radInd}) > 0) {
+                            std::map<std::pair<int,int>, std::pair<int,float>> newVar(var);
+                            newVar[{j,radInd}] = {i, distance};
+                            identificationVariants.push_back(newVar);
+                        } else {
+                            var[{j,radInd}] = {i, distance};
+                        }
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < identificationVariants.size(); i++) {
+            sumDistances.push_back(0.f);
+            for (auto [key, value] : identificationVariants[i]) {
+                sumDistances[i] = sumDistances[i] + value.second;
+            }
+            if (sumDistances[i] < sumDistances[minDistanceVarInd])
+                minDistanceVarInd = i;
+        }
+
+        for (auto [key,value] : identificationVariants[minDistanceVarInd]) {
+            Trajectory & incomT = incomingTrajectories[value.first];
+            newExistingPoints[key.first] += incomT.getPoint(incomT.getCountPoints()-1).position;
+            if (identifiedPointsCount.count(key.first) > 0) 
+                identifiedPointsCount[key.first] += 1;
+            else 
+                identifiedPointsCount[key.first] = 1;
+            incomingTrajectories.erase(incomingTrajectories.begin() + value.first);
+        } 
+        for (int i = 0; i < existingTrajectories.size(); i++) {
+            existingTrajectories[i].resize(existingTrajectories[i].getCountPoints() - T/2);
+            if (newExistingPoints.count(i) > 0) {
+                existingTrajectories[i].addPoint(newExistingPoints[i]/((float)identifiedPointsCount[i]));
+            } else {
+                existingTrajectories[i].addPoint(
+                    existingTrajectories[i].getPoint(existingTrajectories[i].getCountPoints()-1).position +
+                    (existingTrajectories[i].getDirection(existingTrajectories[i].getCountPoints()-1)
+                    * ((float)existingTrajectories[i].getSpeed())) / ((float)T));
+            }
+        }
+    }
+
+    static void identificateIncoming(void) {
+        std::vector<std::vector<std::map<int,int>>> identificationVariants = 
+            {{{incomingTrajectories[0].getRadarIndice(),0}}};
+        std::vector<float> sumDistances = {0};
+        for (int curTrajectoryInd = 1; curTrajectoryInd < incomingTrajectories.size(); curTrajectoryInd++) {
+            std::vector<std::vector<std::map<int,int>>> newVariants;
+            int radInd = incomingTrajectories[curTrajectoryInd].getRadarIndice();
+            for (int varInd = 0; varInd < identificationVariants.size(); varInd++) {
+                std::pair<int,int> trajectoryAddedInd = {-1,-1};
+                for (int groupInd = 0; groupInd < identificationVariants[varInd].size(); groupInd++) {
+                    std::map<int,int> related;
+                    for (std::pair<int, int> tInGroup : identificationVariants[varInd][groupInd]) {
+                        float distance = Trajectory::calcDistance(
+                        incomingTrajectories[tInGroup.second].getPoint(incomingTrajectories[tInGroup.second].getCountPoints()-1).position,
+                        incomingTrajectories[curTrajectoryInd].getPoint(incomingTrajectories[curTrajectoryInd].getCountPoints()-1).position);
+                        if (distance < epsilon) {
+                            if (tInGroup.first != radInd) 
+                                related[radInd] = tInGroup.second;
+                        }
+                    }
+                    if (related.size() == identificationVariants[varInd][groupInd].size()) {
+                        if (trajectoryAddedInd == std::make_pair(-1,-1)) {
+                            identificationVariants[varInd][groupInd][radInd] = curTrajectoryInd;
+                            trajectoryAddedInd = {groupInd,radInd};
+                        } else {
+                            std::vector<std::map<int,int>> copyVar = identificationVariants[varInd];
+                            copyVar[trajectoryAddedInd.first].erase(trajectoryAddedInd.second);
+                            copyVar[groupInd][radInd] = curTrajectoryInd;
+                            newVariants.push_back(copyVar);
+                        }
+                    } else if (!related.empty()) {
+                        std::vector<std::map<int,int>> copyVar = identificationVariants[varInd];
+                        for (std::pair<int,int> tInGroup : copyVar[groupInd]) {
+                            for (std::pair<int,int> relT : related) {
+                                if (tInGroup == relT) {
+                                    copyVar[groupInd].erase(tInGroup.first);
+                                }
+                            }
+                        }
+                        related[radInd] = curTrajectoryInd;
+                        if (trajectoryAddedInd != std::make_pair(-1,-1))
+                            copyVar[trajectoryAddedInd.first].erase(trajectoryAddedInd.second);
+                        copyVar.push_back(related);
+                        newVariants.push_back(copyVar);
+                    }
+                }
+                if (trajectoryAddedInd == std::make_pair(-1,-1)) 
+                    identificationVariants[varInd].push_back({radInd, curTrajectoryInd});
+                else
+                    trajectoryAddedInd = {-1,-1};
+            }
+            identificationVariants.insert(identificationVariants.end(), newVariants.begin(), newVariants.end()); 
+            newVariants.clear();
+        }
+    }
+
     static void extrapolateTrajectories(bool extrExisting) {
         std::vector<Trajectory> & trajectories = 
         (extrExisting) ? existingTrajectories : incomingTrajectories;
@@ -464,7 +577,7 @@ public:
                                                 ImGuiWindowFlags_NoResize | 
                                                 ImGuiWindowFlags_AlwaysAutoResize |
                                                 ImGuiWindowFlags_NoMove);
-            ImGui::SetWindowPos(simWinPos);
+            ImGui::SetWindowPos(menuPos);
             ImGui::SetWindowFontScale(fontScale);
             ImGui::SetNextItemWidth(timerWidth);
             ImGui::InputScalar("m", ImGuiDataType_U8, &timer.first, nullptr, 
