@@ -46,10 +46,6 @@ public:
         trajectory.setPrimitiveType(sf::LineStrip);
         addPoint(firstPoint);
     }
-    Trajectory(std::tuple<sf::Vertex,sf::Vector2f,int> initParams) : Trajectory(std::get<0>(initParams).position) {
-        directions.push_back(std::get<1>(initParams));
-        speed = std::get<2>(initParams);
-    }
 
     void resize(int size) { trajectory.resize(size); }
 
@@ -57,7 +53,6 @@ public:
         sf::Vertex newPoint(point);
         newPoint.color = color;
         trajectory.append(newPoint);
-        refreshDirections();
         endPoint.setPosition(point);
     }
 
@@ -88,7 +83,14 @@ public:
     static sf::Vector2f calcOffset(sf::Vector2f fromPoint, sf::Vector2f toPoint, float v) {
         sf::Vector2f direction = Trajectory::calcDirection(fromPoint, toPoint);
         float distance = Trajectory::calcDistance(fromPoint, toPoint);
-        return (direction*(gravityCoef*v))/distance;
+        if (distance != 0)
+            return (direction*(gravityCoef*v))/distance;
+        else
+            return sf::Vector2f(0,0);
+    }
+
+    sf::Vector2f calcOffset(int ind, int S) {
+        return (directions[ind]/calcDistance(directions[ind], sf::Vector2f(0,0)))*(float)S;
     }
 
     void refreshDirections(void) {
@@ -101,7 +103,7 @@ public:
         }
     }
 
-    sf::Vector2f getDirection(int ind) { return directions[ind]; }
+    std::vector<sf::Vector2f> & getDirections(void) { return directions; }
 
     sf::Vertex & getPoint(int ind) { return trajectory[ind]; }
 
@@ -227,8 +229,6 @@ public:
                 if (trajectory.getPoint(j).position == 
                     radars[subRadInd].getTrajectories()[subTrajectoryInd].getPoint(0).position) {
                     std::pair<int,int> & subStartTime = radars[subRadInd].getTrajectories()[subTrajectoryInd].getStartTime();
-                    /*subStartTime.first = trajectoryStartTime.first + (T*j/speed) / 60;
-                    subStartTime.second = trajectoryStartTime.second + (T*j/speed) % 60;*/
                     subStartTime = {(trajectoryStartTime.first + (T*j/speed) / 60),
                                     (trajectoryStartTime.second + (T*j/speed) % 60)};
                 }
@@ -277,29 +277,46 @@ public:
 
     static void identificateExisting(void) {
         std::vector<std::map<std::pair<int,int>, std::pair<int,float>>> identificationVariants{{}};
+        //содержит варианты отождествлений map(ключ:{индекс ЭОИ, индекс РЛС}, значение:{индекс ЭОП, дистанция между т.})
         std::vector<float> sumDistances;
         std::map<int, sf::Vector2f> newExistingPoints;
+        std::map<int, sf::Vector2f> newDirections;
+        std::map<int, int> newSpeed;
         std::map<int,int> identifiedPointsCount;
         int minDistanceVarInd = 0;
         for (int i = 0; i < incomingTrajectories.size(); i++) {
             for (int j = 0; j < existingTrajectories.size(); j++) {
                 sf::Vector2f existLastP = existingTrajectories[j].getPoint(existingTrajectories[j].getCountPoints()-1).position;
                 sf::Vector2f incomLastP = incomingTrajectories[i].getPoint(incomingTrajectories[i].getCountPoints()-1).position;
-                newExistingPoints[j] = existLastP;
                 float distance = Trajectory::calcDistance(existLastP, incomLastP);
                 int radInd = incomingTrajectories[i].getRadarIndice();
+                std::cout<<"\nRADAR = "<<radInd;
                 if (distance < epsilon) {
-                    for (auto var : identificationVariants) {
-                        if (var.count({j,radInd}) > 0) {
-                            std::map<std::pair<int,int>, std::pair<int,float>> newVar(var);
+                    std::cout<<"WW";
+                    std::vector<std::map<std::pair<int,int>, std::pair<int,float>>> newVariants;
+                    for (int varInd = 0; varInd < identificationVariants.size(); varInd++) {
+                        std::cout<<"\nVXOD";
+                        if (identificationVariants[varInd].count({j,radInd}) > 0) {
+                            std::map<std::pair<int,int>, std::pair<int,float>> newVar(identificationVariants[varInd]);
                             newVar[{j,radInd}] = {i, distance};
-                            identificationVariants.push_back(newVar);
+                            newVariants.push_back(newVar);
                         } else {
-                            var[{j,radInd}] = {i, distance};
+                            std::cout<<"\nDOBAVIL";
+                            identificationVariants[varInd][{j,radInd}] = {i, distance};
                         }
                     }
+                    identificationVariants.insert(identificationVariants.end(), newVariants.begin(), newVariants.end());
                 }
             }
+        }
+        for (auto var : identificationVariants) {
+            std::cout<<"\nVAR {";
+            for (auto linked : var) {
+                std::cout<<"\nN exT:"<<linked.first.first;
+                std::cout<<"\nN Rad:"<<linked.first.second;
+                std::cout<<"\nN inT:"<<linked.second.first;
+            }
+            std::cout<<"\n}";
         }
         for (int i = 0; i < identificationVariants.size(); i++) {
             sumDistances.push_back(0.f);
@@ -310,9 +327,22 @@ public:
                 minDistanceVarInd = i;
         }
 
+        for (int i = 0; i < incomingTrajectories.size(); i++) {
+            int newSize = incomingTrajectories[i].getCountPoints() - T/2;
+            incomingTrajectories[i].resize(newSize);
+            incomingTrajectories[i].getDirections().resize(newSize);
+        }
         for (auto [key,value] : identificationVariants[minDistanceVarInd]) {
             Trajectory & incomT = incomingTrajectories[value.first];
-            newExistingPoints[key.first] += incomT.getPoint(incomT.getCountPoints()-1).position;
+            if (newExistingPoints.count(key.first) == 0) {
+                newExistingPoints[key.first] = incomT.getPoint(incomT.getCountPoints()-1).position;
+                newDirections[key.first] = incomT.getDirections()[incomT.getCountPoints()-1];
+                newSpeed[key.first] = incomT.getSpeed();
+            } else {
+                newExistingPoints[key.first] += incomT.getPoint(incomT.getCountPoints()-1).position;
+                newDirections[key.first] += incomT.getDirections()[incomT.getCountPoints()-1];
+                newSpeed[key.first] += incomT.getSpeed();
+            }
             if (identifiedPointsCount.count(key.first) > 0) 
                 identifiedPointsCount[key.first] += 1;
             else 
@@ -320,22 +350,28 @@ public:
             incomingTrajectories.erase(incomingTrajectories.begin() + value.first);
         } 
         for (int i = 0; i < existingTrajectories.size(); i++) {
-            existingTrajectories[i].resize(existingTrajectories[i].getCountPoints() - T/2);
+            int newSize = existingTrajectories[i].getCountPoints() - T/2;
+            existingTrajectories[i].resize(newSize);
+            existingTrajectories[i].getDirections().resize(newSize);
             if (newExistingPoints.count(i) > 0) {
-                existingTrajectories[i].addPoint(newExistingPoints[i]/((float)identifiedPointsCount[i]));
-            } else {
                 existingTrajectories[i].addPoint(
-                    existingTrajectories[i].getPoint(existingTrajectories[i].getCountPoints()-1).position +
-                    (existingTrajectories[i].getDirection(existingTrajectories[i].getCountPoints()-1)
-                    * ((float)existingTrajectories[i].getSpeed())) / ((float)T));
+                    (existingTrajectories[i].getPoint(existingTrajectories[i].getCountPoints()-1).position +
+                     newExistingPoints[i]) /((float)identifiedPointsCount[i] + 1.f));
+                existingTrajectories[i].getDirections().push_back(
+                    (existingTrajectories[i].getDirections()[existingTrajectories[i].getCountPoints()-2] +
+                     newDirections[i]) /((float)identifiedPointsCount[i] + 1.f));
+                existingTrajectories[i].getSpeed() = (existingTrajectories[i].getSpeed() + newSpeed[i]) / 
+                    ((float)identifiedPointsCount[i] + 1.f);
+            } else {
+                existingTrajectories.erase(existingTrajectories.begin()+i);
             }
         }
     }
 
     static void identificateIncoming(void) {
         std::vector<std::vector<std::map<int,int>>> identificationVariants = 
-            {{{incomingTrajectories[0].getRadarIndice(),0}}};
-        std::vector<float> sumDistances = {0};
+            {{std::map<int,int>{{incomingTrajectories[0].getRadarIndice(),0}}}};
+        std::vector<float> sumDistances;
         for (int curTrajectoryInd = 1; curTrajectoryInd < incomingTrajectories.size(); curTrajectoryInd++) {
             std::vector<std::vector<std::map<int,int>>> newVariants;
             int radInd = incomingTrajectories[curTrajectoryInd].getRadarIndice();
@@ -379,32 +415,83 @@ public:
                     }
                 }
                 if (trajectoryAddedInd == std::make_pair(-1,-1)) 
-                    identificationVariants[varInd].push_back({radInd, curTrajectoryInd});
+                    identificationVariants[varInd].push_back(std::map<int,int>{{radInd, curTrajectoryInd}});
                 else
                     trajectoryAddedInd = {-1,-1};
             }
             identificationVariants.insert(identificationVariants.end(), newVariants.begin(), newVariants.end()); 
             newVariants.clear();
         }
+
+        std::vector<float> averageDistances(identificationVariants.size(), 0.f);
+        for (int varInd = 0; varInd < identificationVariants.size(); varInd++) {
+            std::vector<sf::Vector2f> groupCentres(identificationVariants[varInd].size(), {0.f,0.f});
+            for (int groupInd = 0; groupInd < identificationVariants[varInd].size(); groupInd++) {
+                for (std::pair<int,int> tInGroup : identificationVariants[varInd][groupInd]) {
+                    groupCentres[varInd] += 
+                        ((incomingTrajectories[tInGroup.second].getPoint(
+                          incomingTrajectories[tInGroup.second].getCountPoints()-1).position)/
+                          (float)identificationVariants[varInd][groupInd].size());
+                }
+            }
+            int numDistances = (groupCentres.size()*(groupCentres.size() - 1))/2;
+            for (int i = 0; i < groupCentres.size(); i++) {
+                for (int j = i + 1; j < groupCentres.size(); j++) {
+                    averageDistances[varInd] += (Trajectory::calcDistance(groupCentres[i], groupCentres[j])/numDistances);
+                }
+            }
+        }
+
+        int maxAvDistInd = 0;
+        for (int i = 1; i < averageDistances.size(); i++) {
+            if (averageDistances[i] > averageDistances[maxAvDistInd])
+                maxAvDistInd = i;
+        }
+
+        for (int groupInd = 0; groupInd < identificationVariants[maxAvDistInd].size(); groupInd++) {
+            sf::Vector2f newExistingPoint(0.f,0.f);
+            sf::Vector2f newDirection(0.f,0.f);
+            int newSpeed = 0;
+            for (std::pair<int,int> tInGroup : identificationVariants[maxAvDistInd][groupInd]) {
+                newExistingPoint += incomingTrajectories[tInGroup.second].getPoint(
+                    incomingTrajectories[tInGroup.second].getCountPoints()-1).position /
+                    (float)identificationVariants[maxAvDistInd][groupInd].size();
+                newDirection += incomingTrajectories[tInGroup.second].getDirections()[
+                    incomingTrajectories[tInGroup.second].getCountPoints()-1] /
+                    (float)identificationVariants[maxAvDistInd][groupInd].size();
+                newSpeed += incomingTrajectories[tInGroup.second].getSpeed() /
+                    (float)identificationVariants[maxAvDistInd][groupInd].size();
+            }
+            existingTrajectories.push_back(Trajectory(newExistingPoint));
+            existingTrajectories.back().getDirections()[0] = newDirection;
+            std::cout<<"\nINCOMING_DIR"<<newDirection.x<<" "<<newDirection.y;
+            existingTrajectories.back().getSpeed() = newSpeed;
+        }
+        incomingTrajectories.clear();
     }
 
-    static void extrapolateTrajectories(bool extrExisting) {
+    static void extrapolationStep(bool extrExisting) {
         std::vector<Trajectory> & trajectories = 
         (extrExisting) ? existingTrajectories : incomingTrajectories;
         std::vector<Trajectory> & labels = 
         (!extrExisting) ? existingTrajectories : incomingTrajectories;
+        if (extrExisting) 
+            std::cout<<"\nMOVE_EX";
+        else 
+            std::cout<<"\nMOVE_IN";
         std::vector<sf::Vector2f> offsets(trajectories.size(), sf::Vector2f(0.f,0.f));
+        std::vector<sf::Vector2f> directionsPointLast;
         for (int i = 0; i < trajectories.size(); i++) {
+            directionsPointLast.push_back(trajectories[i].getDirections()[trajectories[i].getCountPoints()-1]);
             int speed = trajectories[i].getSpeed();
-            for (int j = 0; j < trajectories.size(); i++) {
-                if (j != i) {
-                    offsets[i] += Trajectory::calcOffset(
-                        trajectories[j].getPoint(trajectories[j].getCountPoints()-1).position,
-                        trajectories[i].getPoint(trajectories[i].getCountPoints()-1).position,
-                        (float)speed
-                    );
-                }
+            for (int j = 0; (j < trajectories.size()) && (j != i); j++) {
+                offsets[i] += Trajectory::calcOffset(
+                    trajectories[j].getPoint(trajectories[j].getCountPoints()-1).position,
+                    trajectories[i].getPoint(trajectories[i].getCountPoints()-1).position,
+                    (float)speed
+                );
             }
+            std::cout<<"\nSTEP_OFFSET"<<offsets[i].x<<" "<<offsets[i].y;
             for (int j = 0; j < labels.size(); j++) {
                 offsets[i] += Trajectory::calcOffset(
                     trajectories[i].getPoint(trajectories[i].getCountPoints()-1).position,
@@ -412,73 +499,63 @@ public:
                     (float)speed
                 );
             }
-            offsets[i] += (trajectories[i].getDirection(trajectories[i].getCountPoints()-1)
-                          * ((float)speed)) / ((float)T);
+            std::cout<<"\nSTEP_OFFSET"<<offsets[i].x<<" "<<offsets[i].y;
+            offsets[i] += trajectories[i].calcOffset(trajectories[i].getCountPoints()-1,speed);
+            std::cout<<"\nSTEP_OFFSET"<<offsets[i].x<<" "<<offsets[i].y;
         }
         for (int i = 0; i < trajectories.size(); i++) {
+            std::cout<<"\nSTEP_OFFSET"<<offsets[i].x<<" "<<offsets[i].y;
             sf::Vector2f newPoint = trajectories[i].getPoint(trajectories[i].getCountPoints()-1).position + offsets[i];
             trajectories[i].addPoint(newPoint);
+            trajectories[i].getDirections().push_back(directionsPointLast[i]);
+            std::cout<<"\nSTEP_DIR"<<directionsPointLast[i].x<<" "<<directionsPointLast[i].y;
         }
     }
 
-    static void identificateTrajectories(void) {
-        std::vector<std::map<std::pair<int,int>, std::pair<int,float>>> identificationVariants{{}};
-        std::vector<float> sumDistances;
-        std::map<int, sf::Vector2f> newExistingPoints;
-        std::map<int,int> identifiedPointsCount;
-        int minDistanceVarInd = 0;
-        for (int i = 0; i < incomingTrajectories.size(); i++) {
-            for (int j = 0; j < existingTrajectories.size(); j++) {
-                sf::Vector2f existLastP = existingTrajectories[j].getPoint(existingTrajectories[j].getCountPoints()-1).position;
-                sf::Vector2f incomLastP = incomingTrajectories[i].getPoint(incomingTrajectories[i].getCountPoints()-1).position;
-                newExistingPoints[j] = existLastP;
-                float distance = Trajectory::calcDistance(existLastP, incomLastP);
-                int radInd = incomingTrajectories[i].getRadarIndice();
-                if (distance < epsilon) {
-                    for (auto var : identificationVariants) {
-                        if (var.count({j,radInd}) > 0) {
-                            std::map<std::pair<int,int>, std::pair<int,float>> newVar(var);
-                            newVar[{j,radInd}] = {i, distance};
-                            identificationVariants.push_back(newVar);
-                        } else {
-                            var[{j,radInd}] = {i, distance};
-                        }
+    static void extrapolateExisting(void) {
+        for (int i = 0; i < existingTrajectories.size(); i++) {
+            existingTrajectories[i].addPoint(
+                existingTrajectories[i].getPoint(existingTrajectories[i].getCountPoints()-1).position +
+                existingTrajectories[i].calcOffset(existingTrajectories[i].getCountPoints()-1, T/existingTrajectories[i].getSpeed()));
+            existingTrajectories[i].refreshDirections();
+            std::cout<<"\nEXTREX_DIR"<<existingTrajectories[i].getDirections()[existingTrajectories[i].getCountPoints()-1].x;
+            std::cout<<" "<<existingTrajectories[i].getDirections()[existingTrajectories[i].getCountPoints()-1].y;
+        }
+    }
+
+    static void getIncoming(int elapsedSecs) {
+        for (int i = 0; i < radars.size(); i++) {
+            std::vector<Trajectory> & trajectories = radars[i].getTrajectories();
+            for (int j = 0; j < trajectories.size(); j++) {
+                std::cout<<"\nTRAJECTORY_SIZE "<<trajectories.size();
+                std::pair<int,int> & t0 = trajectories[j].getStartTime();
+                int speed = trajectories[j].getSpeed();
+                int startTimeSec = t0.first*60 + t0.second;
+                int correctElapsedSecs = elapsedSecs - startTimeSec;
+                if (correctElapsedSecs >= 0) {
+                    int S = correctElapsedSecs*speed;
+                    int ind = S/T;
+                    int residueS = S%T;
+                    if ((elapsedSecs >= startTimeSec) && (ind < trajectories[j].getCountPoints())){
+                        std::cout<<"\nIND "<<ind;
+                        std::cout<<"\nGETINCOM_DIR0 "<<trajectories[j].getDirections()[0].x<<" "<<trajectories[j].getDirections()[0].y;
+                        incomingTrajectories.push_back(Trajectory(
+                            trajectories[j].getPoint(ind).position + trajectories[j].calcOffset(ind, residueS)));
+                        std::cout<<"\nGETINCOM_DIR1 "<<trajectories[j].getDirections()[1].x<<" "<<trajectories[j].getDirections()[1].y;
+                        incomingTrajectories.back().getDirections()[0] = trajectories[j].getDirections()[ind];
+                        std::cout<<"\nGETINCOM_DIR "<<trajectories[j].getDirections()[ind].x<<" "<<trajectories[j].getDirections()[ind].y;
+                        incomingTrajectories.back().getSpeed() = trajectories[j].getSpeed();
+                        incomingTrajectories.back().getRadarIndice() = i;
                     }
                 }
             }
         }
-        for (int i = 0; i < identificationVariants.size(); i++) {
-            sumDistances.push_back(0.f);
-            for (auto [key, value] : identificationVariants[i]) {
-                sumDistances[i] = sumDistances[i] + value.second;
-            }
-            if (sumDistances[i] < sumDistances[minDistanceVarInd])
-                minDistanceVarInd = i;
-        }
+    } 
 
-        for (auto [key,value] : identificationVariants[minDistanceVarInd]) {
-            Trajectory & incomT = incomingTrajectories[value.first];
-            newExistingPoints[key.first] += incomT.getPoint(incomT.getCountPoints()-1).position;
-            if (identifiedPointsCount.count(key.first) > 0) 
-                identifiedPointsCount[key.first] += 1;
-            else 
-                identifiedPointsCount[key.first] = 1;
-            incomingTrajectories.erase(incomingTrajectories.begin() + value.first);
-        } 
-        for (int i = 0; i < existingTrajectories.size(); i++) {
-            existingTrajectories[i].resize(existingTrajectories[i].getCountPoints() - T/2);
-            if (newExistingPoints.count(i) > 0) {
-                existingTrajectories[i].addPoint(newExistingPoints[i]/((float)identifiedPointsCount[i]));
-            } else {
-                existingTrajectories[i].addPoint(
-                    existingTrajectories[i].getPoint(existingTrajectories[i].getCountPoints()-1).position +
-                    (existingTrajectories[i].getDirection(existingTrajectories[i].getCountPoints()-1)
-                    * ((float)existingTrajectories[i].getSpeed())) / ((float)T));
-            }
-        }
-        for (int i = 0; i < incomingTrajectories.size(); i++) {
-            incomingTrajectories[i].resize(incomingTrajectories[i].getCountPoints() - T/2);
-            existingTrajectories.push_back(incomingTrajectories[i]);
+    static void identificateTrajectories(void) {
+        identificateExisting();
+        if (!incomingTrajectories.empty()) {
+            identificateIncoming();
         }
     }
 
@@ -488,11 +565,11 @@ public:
         static int elapsedSecs = 0;
         static sf::Time stepTime = sf::Time::Zero;
         static sf::Time periodTime = sf::Time::Zero;
+        static bool extrExisting = true;
         if (modeCP == mode::simulation) {
             stepTime += elapsed;
             periodTime += elapsed;
             if (stepTime >= simStep) {
-                static bool extrExisting = true;
                 elapsedSecs++;
                 stepTime -= simStep;
                 if (timer.second == 0) {
@@ -505,53 +582,26 @@ public:
                 } else {
                     timer.second--;
                 }
-                extrapolateTrajectories(extrExisting);
+                extrapolationStep(extrExisting);
                 extrExisting = !extrExisting;
+                for (Trajectory & t : existingTrajectories)
+                    t.setColor(sf::Color::Green);
             }
             if (periodTime >= updateRate) {
                 periodTime -= updateRate;
                 identificateTrajectories();
-                initIncomingTrajectories(elapsedSecs);
+                std::cout<<"\nEXIST="<<existingTrajectories.size();
+                std::cout<<"\nINCOM="<<incomingTrajectories.size();
+                extrapolateExisting();
+                getIncoming(elapsedSecs);
             }
         } else if (modeCP != mode::pause) {
             elapsedSecs = 0;
+            extrExisting = true;
             stepTime = sf::Time::Zero;
             periodTime = sf::Time::Zero;
+            existingTrajectories.clear();
         }
-    }
-
-    static void initIncomingTrajectories(int elapsedSecs) {
-        for (int i = 0; i < radars.size(); i++) {
-            std::vector<Trajectory> & trajectories = radars[i].getTrajectories();
-            for (int j = 0; j < trajectories.size(); j++) {
-                std::pair<int,int> & t0 = trajectories[j].getStartTime();
-                int ind = elapsedSecs - (t0.first*60 + t0.second);
-                if ((ind >= 0) && (ind < trajectories[j].getCountPoints())){
-                    std::tuple<sf::Vertex, sf::Vector2f, int> initParams = {
-                        trajectories[j].getPoint(ind),
-                        trajectories[j].getDirection(ind),
-                        trajectories[j].getSpeed()
-                    };
-                    incomingTrajectories.push_back(Trajectory(initParams));
-                }
-            }
-        }
-    }
-
-    static void initExistingTrajectories(void) {
-        if(existingTrajectories.empty()) {
-            for (int i = 0; i < definedTrajectories.size(); i++) {
-                if (definedTrajectories[i].trajectory.getStartTime() == std::make_pair(0,0)) {
-                    std::tuple<sf::Vertex,sf::Vector2f,int> initParams = {
-                        definedTrajectories[i].trajectory.getPoint(0),
-                        definedTrajectories[i].trajectory.getDirection(0),
-                        definedTrajectories[i].trajectory.getSpeed()
-                    };
-                    existingTrajectories.push_back(Trajectory(initParams));
-                    existingTrajectories.back().setColor(sf::Color::Green);
-                }
-            }
-        } 
     }
 
     static void drawRadars(sf::RenderWindow & win) {
@@ -621,8 +671,12 @@ public:
                 if (modeCP == mode::stay) {
                     modeCP = mode::add;
                 } else {
-                    for (int i = 0; i < definedTrajectories.size(); i++)
+                    for (int i = 0; i < definedTrajectories.size(); i++) {
                         updateTrajectoryTime(i);
+                        for (std::pair<int,int> subT : definedTrajectories[i].subTrajectoriesRadInd) {
+                            radars[subT.first].getTrajectories()[subT.second].refreshDirections();
+                        }
+                    }
                     modeCP = mode::stay;
                 }
             }
@@ -695,8 +749,7 @@ public:
             if (ImGui::Button("Start")) {
                 if ((modeCP != mode::config) && (modeCP != mode::add)) {
                     modeCP = mode::simulation;
-                    initExistingTrajectories();
-                    initIncomingTrajectories(0);
+                    getIncoming(0);
                 }
             }
             ImGui::End();
@@ -804,7 +857,6 @@ private:
     };
     static inline std::pair<int,int> timer = {59,59};
     static inline mode modeCP = mode::stay;
-    static inline bool isDefiningTrajectories = false;
     static inline std::vector<defTrajectory> definedTrajectories; 
     static inline std::vector<Trajectory> existingTrajectories;
     static inline std::vector<Trajectory> incomingTrajectories;
