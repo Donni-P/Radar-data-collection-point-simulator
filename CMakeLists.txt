@@ -44,3 +44,5 @@ target_link_libraries(MyProject
     ImGui
     ${OPENGL_LIBRARIES}
 )
+
+include_directories(include)
